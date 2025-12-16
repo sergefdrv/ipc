@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use anyhow::Result;
+use fendermint_module::ModuleBundle;
+use fvm::machine::DefaultMachine;
 
 use crate::fvm::{
     observe::{MsgExec, MsgExecPurpose},
@@ -12,17 +14,34 @@ use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding::{self, RawBytes};
 use fvm_shared::{bigint::BigInt, econ::TokenAmount, error::ExitCode, message::Message};
 
-use super::constants::BLOCK_GAS_LIMIT;
+use super::{constants::BLOCK_GAS_LIMIT, externs::FendermintExterns, store::ReadOnlyBlockstore};
 use ipc_observability::emit;
 use num_traits::Zero;
 use std::time::Instant;
 
 /// Estimates the gas for a given message.
-pub async fn estimate_gassed_msg<DB: Blockstore + Clone + 'static + Send + Sync, M: fendermint_module::ModuleBundle + Default>(
+pub async fn estimate_gassed_msg<
+    DB: Blockstore + Clone + 'static + Send + Sync,
+    M: fendermint_module::ModuleBundle + Default,
+>(
     state: FvmQueryState<DB, M>,
     msg: &mut Message,
     gas_overestimation_rate: f64,
-) -> Result<(FvmQueryState<DB, M>, Option<GasEstimate>)> {
+) -> Result<(FvmQueryState<DB, M>, Option<GasEstimate>)>
+where
+    M: ModuleBundle<
+        Kernel: fvm::Kernel<
+            CallManager: fvm::call_manager::CallManager<
+                Machine = DefaultMachine<
+                    // DB,
+                    // FendermintExterns<DB>,
+                    ReadOnlyBlockstore<DB>,
+                    FendermintExterns<ReadOnlyBlockstore<DB>>,
+                >,
+            >,
+        >,
+    >,
+{
     msg.gas_limit = BLOCK_GAS_LIMIT;
     let gas_premium = msg.gas_premium.clone();
     let gas_fee_cap = msg.gas_fee_cap.clone();
@@ -71,11 +90,28 @@ pub async fn estimate_gassed_msg<DB: Blockstore + Clone + 'static + Send + Sync,
 }
 
 /// Searches for a valid gas limit for the message by iterative estimation.
-pub async fn gas_search<DB: Blockstore + Clone + 'static + Send + Sync, M: fendermint_module::ModuleBundle + Default>(
+pub async fn gas_search<
+    DB: Blockstore + Clone + 'static + Send + Sync,
+    M: fendermint_module::ModuleBundle + Default,
+>(
     mut state: FvmQueryState<DB, M>,
     msg: &Message,
     gas_search_step: f64,
-) -> Result<(FvmQueryState<DB, M>, GasEstimate)> {
+) -> Result<(FvmQueryState<DB, M>, GasEstimate)>
+where
+    M: ModuleBundle<
+        Kernel: fvm::Kernel<
+            CallManager: fvm::call_manager::CallManager<
+                Machine = DefaultMachine<
+                    // DB,
+                    // FendermintExterns<DB>,
+                    ReadOnlyBlockstore<DB>,
+                    FendermintExterns<ReadOnlyBlockstore<DB>>,
+                >,
+            >,
+        >,
+    >,
+{
     let mut curr_limit = msg.gas_limit;
 
     loop {
@@ -101,11 +137,28 @@ pub async fn gas_search<DB: Blockstore + Clone + 'static + Send + Sync, M: fende
 }
 
 /// Helper for making an estimation call with a specific gas limit.
-async fn estimation_call_with_limit<DB: Blockstore + Clone + 'static + Send + Sync, M: fendermint_module::ModuleBundle + Default>(
+async fn estimation_call_with_limit<
+    DB: Blockstore + Clone + 'static + Send + Sync,
+    M: fendermint_module::ModuleBundle + Default,
+>(
     state: FvmQueryState<DB, M>,
     mut msg: Message,
     limit: u64,
-) -> Result<(FvmQueryState<DB, M>, Option<GasEstimate>)> {
+) -> Result<(FvmQueryState<DB, M>, Option<GasEstimate>)>
+where
+    M: ModuleBundle<
+        Kernel: fvm::Kernel<
+            CallManager: fvm::call_manager::CallManager<
+                Machine = DefaultMachine<
+                    // DB,
+                    // FendermintExterns<DB>,
+                    ReadOnlyBlockstore<DB>,
+                    FendermintExterns<ReadOnlyBlockstore<DB>>,
+                >,
+            >,
+        >,
+    >,
+{
     msg.gas_limit = limit;
     msg.sequence = 0; // Reset nonce
 

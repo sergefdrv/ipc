@@ -1,10 +1,10 @@
 // Copyright 2022-2024 Protocol Labs
 // SPDX-License-Identifier: Apache-2.0, MIT
 
+use crate::types::AppExecState;
 use anyhow::{anyhow, Ok, Result};
 use fendermint_crypto::PublicKey;
 use fendermint_vm_interpreter::fvm::state::ipc::GatewayCaller;
-use crate::types::AppExecState;
 use std::collections::HashMap;
 
 use tendermint::account::Id as TendermintId;
@@ -21,7 +21,7 @@ pub(crate) struct ValidatorCache {
 impl ValidatorCache {
     pub fn new_from_state<SS>(state: &mut AppExecState<SS>) -> Result<Self>
     where
-        SS: Blockstore + Clone + 'static,
+        SS: Blockstore + Clone + Send + Sync + 'static,
     {
         let gateway = GatewayCaller::default();
         let (_, validators) = gateway.current_power_table(state)?;

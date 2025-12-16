@@ -1,7 +1,6 @@
 // Copyright 2022-2024 Protocol Labs
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use crate::errors::*;
 use crate::fvm::end_block_hook::{EndBlockManager, PowerUpdates};
 use crate::fvm::executions::{
     execute_cron_message, execute_signed_message, push_block_to_chainmeta_actor_if_possible,
@@ -25,6 +24,7 @@ use crate::selectors::{
 };
 use crate::types::*;
 use crate::MessagesInterpreter;
+use crate::{errors::*, QueryInterpreter};
 use anyhow::{Context, Result};
 use cid::Cid;
 use fendermint_module::ModuleBundle;
@@ -32,6 +32,7 @@ use fendermint_vm_message::chain::ChainMessage;
 use fendermint_vm_message::ipc::IpcMessage;
 use fendermint_vm_message::query::{FvmQuery, StateParams};
 use fendermint_vm_message::signed::SignedMessage;
+use fvm::machine::DefaultMachine;
 use fvm_ipld_blockstore::Blockstore;
 use fvm_ipld_encoding;
 use fvm_shared::state::ActorState;
@@ -41,6 +42,8 @@ use ipc_observability::emit;
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Instant;
+
+use super::externs::FendermintExterns;
 
 struct Actor {
     id: ActorID,
@@ -219,6 +222,18 @@ where
     DB: Blockstore + Clone + Send + Sync + 'static,
     M: ModuleBundle + Default,
     M::Executor: Send,
+    // M: ModuleBundle<
+    //     Kernel: fvm::Kernel<
+    //         CallManager: fvm::call_manager::CallManager<
+    //             Machine = DefaultMachine<
+    //                 DB,
+    //                 FendermintExterns<DB>,
+    //                 // ReadOnlyBlockstore<DB>,
+    //                 // FendermintExterns<ReadOnlyBlockstore<DB>>,
+    //             >,
+    //         >,
+    //     >,
+    // >,
 {
     async fn check_message(
         &self,
@@ -567,12 +582,58 @@ where
             },
         }
     }
+}
 
+#[async_trait::async_trait]
+impl<DB, M> QueryInterpreter<DB, M> for FvmMessagesInterpreter<DB, M>
+where
+    DB: Blockstore + Clone + Send + Sync + 'static,
+    M: ModuleBundle + Default,
+    M::Executor: Send,
+    // M: ModuleBundle<
+    //     Kernel: fvm::Kernel<
+    //         CallManager: fvm::call_manager::CallManager<
+    //             Machine = DefaultMachine<
+    //                 DB,
+    //                 FendermintExterns<DB>,
+    //                 // ReadOnlyBlockstore<DB>,
+    //                 // FendermintExterns<ReadOnlyBlockstore<DB>>,
+    //             >,
+    //         >,
+    //     >,
+    // >,
+    M: ModuleBundle<
+        Kernel: fvm::Kernel<
+            CallManager: fvm::call_manager::CallManager<
+                Machine = DefaultMachine<
+                    // DB,
+                    // FendermintExterns<DB>,
+                    ReadOnlyBlockstore<DB>,
+                    FendermintExterns<ReadOnlyBlockstore<DB>>,
+                >,
+            >,
+        >,
+    >,
+{
     async fn query(
         &self,
         state: FvmQueryState<DB, M>,
         query: Query,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, QueryError>
+// where
+        // M: ModuleBundle<
+        //     Kernel: fvm::Kernel<
+        //         CallManager: fvm::call_manager::CallManager<
+        //             Machine = DefaultMachine<
+        //                 // DB,
+        //                 // FendermintExterns<DB>,
+        //                 ReadOnlyBlockstore<DB>,
+        //                 FendermintExterns<ReadOnlyBlockstore<DB>>,
+        //             >,
+        //         >,
+        //     >,
+        // >,
+    {
         let query = if query.path.as_str() == "/store" {
             let cid = fvm_ipld_encoding::from_slice::<Cid>(&query.params)
                 .context("failed to decode CID")

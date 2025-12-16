@@ -22,6 +22,7 @@ use super::{
 };
 // fendermint_module::NoOpModuleBundle removed - use NoOpModuleBundle or specify module type explicitly
 use crate::fvm::end_block_hook::LightClientCommitments;
+use crate::fvm::externs::FendermintExterns;
 use crate::types::AppliedMessage;
 use ipc_actors_abis::checkpointing_facet::CheckpointingFacet;
 use ipc_actors_abis::gateway_getter_facet::GatewayGetterFacet;
@@ -80,7 +81,16 @@ impl<DB> GatewayCaller<DB> {
 
 impl<DB: Blockstore + Clone> GatewayCaller<DB> {
     /// Return true if the current subnet is the root subnet.
-    pub fn is_anchored(&self, state: &mut FvmExecState<DB, fendermint_module::NoOpModuleBundle>) -> anyhow::Result<bool> {
+    pub fn is_anchored(
+        &self,
+        state: &mut FvmExecState<
+            DB,
+            fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>,
+        >,
+    ) -> anyhow::Result<bool>
+    where
+        DB: Send + Sync,
+    {
         self.subnet_id(state).map(|id| id.route.is_empty())
     }
 
@@ -280,10 +290,16 @@ impl<DB: Blockstore + Clone> GatewayCaller<DB> {
 
     pub fn approve_subnet_joining_gateway(
         &self,
-        state: &mut FvmExecState<DB, fendermint_module::NoOpModuleBundle>,
+        state: &mut FvmExecState<
+            DB,
+            fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>,
+        >,
         subnet: EthAddress,
         owner: EthAddress,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        DB: Send + Sync,
+    {
         let evm_subnet = ethers::types::Address::from(subnet);
         self.manager
             .call(state, |c| c.approve_subnet(evm_subnet).from(owner))?;

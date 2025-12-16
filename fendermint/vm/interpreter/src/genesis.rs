@@ -18,8 +18,8 @@ use fendermint_eth_hardhat::{ContractSourceAndName, Hardhat, FQN};
 use fendermint_vm_actor_interface::diamond::{EthContract, EthContractMap};
 use fendermint_vm_actor_interface::eam::EthAddress;
 use fendermint_vm_actor_interface::{
-    account, activity, burntfunds, chainmetadata, cron, eam,
-    f3_light_client, gas_market, init, ipc, reward, system, EMPTY_ARR,
+    account, activity, burntfunds, chainmetadata, cron, eam, f3_light_client, gas_market, init,
+    ipc, reward, system, EMPTY_ARR,
 };
 
 // Storage-node actor interfaces moved to plugins/storage-node/src/actor_interface/
@@ -709,7 +709,7 @@ struct ContractDeployer<'a, DB> {
 
 impl<'a, DB> ContractDeployer<'a, DB>
 where
-    DB: Blockstore + 'static + Clone,
+    DB: Blockstore + 'static + Clone + Send + Sync,
 {
     pub fn new(
         hardhat: &'a Hardhat,

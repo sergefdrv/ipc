@@ -16,13 +16,21 @@ use crate::fvm::store::ReadOnlyBlockstore;
 use crate::types::*;
 use async_trait::async_trait;
 use fendermint_module::ModuleBundle;
+use fvm::externs::FendermintExterns;
+use ref_fvm::call_manager::CallManager;
+use ref_fvm::machine::DefaultMachine;
+use ref_fvm::Kernel;
 use std::sync::Arc;
 
 use fvm_ipld_blockstore::Blockstore;
 
+extern crate fvm as ref_fvm;
+
 #[async_trait]
-pub trait MessagesInterpreter<DB, M = fendermint_module::NoOpModuleBundle>
-where
+pub trait MessagesInterpreter<
+    DB,
+    M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>,
+> where
     DB: Blockstore + Clone,
     M: ModuleBundle,
 {
@@ -61,10 +69,31 @@ where
         state: &mut FvmExecState<DB, M>,
         msg: Vec<u8>,
     ) -> Result<ApplyMessageResponse, ApplyMessageError>;
+}
 
+#[async_trait]
+pub trait QueryInterpreter<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>
+where
+    DB: Blockstore + Clone,
+    M: ModuleBundle,
+{
     async fn query(
         &self,
         state: FvmQueryState<DB, M>,
         query: Query,
     ) -> Result<QueryResponse, QueryError>;
+    // where
+    //     DB: Send,
+    //     M: ModuleBundle<
+    //         Kernel: Kernel<
+    //             CallManager: CallManager<
+    //                 Machine = DefaultMachine<
+    //                     DB,
+    //                     fvm::externs::FendermintExterns<DB>,
+    //                     // ReadOnlyBlockstore<DB>,
+    //                     // fvm::externs::FendermintExterns<ReadOnlyBlockstore<DB>>,
+    //                 >,
+    //             >,
+    //         >,
+    //     >;
 }

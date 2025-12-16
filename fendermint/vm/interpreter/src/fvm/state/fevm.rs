@@ -5,6 +5,7 @@ use std::any::type_name;
 use std::fmt::Debug;
 use std::{marker::PhantomData, sync::Arc};
 
+use crate::fvm::externs::FendermintExterns;
 use crate::types::AppliedMessage;
 use anyhow::{anyhow, bail, Context};
 use ethers::abi::{AbiDecode, AbiEncode, Detokenize};
@@ -221,12 +222,16 @@ where
     /// intended to be used with methods that are expected to fail under certain conditions.
     pub fn try_call<T, F>(
         &self,
-        state: &mut FvmExecState<DB, fendermint_module::NoOpModuleBundle>,
+        state: &mut FvmExecState<
+            DB,
+            fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>,
+        >,
         f: F,
     ) -> anyhow::Result<ContractResult<T, E>>
     where
         F: FnOnce(&C) -> MockContractCall<T>,
         T: Detokenize,
+        DB: Send + Sync,
     {
         Ok(match self.try_call_with_ret(state, f)? {
             Ok(r) => Ok(r.into_decoded()?),

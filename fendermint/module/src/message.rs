@@ -11,7 +11,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use fendermint_vm_core::Timestamp;
 use fendermint_vm_message::ipc::IpcMessage;
-use fvm_ipld_blockstore::Blockstore;
 use fvm_shared::address::Address;
 use fvm_shared::clock::ChainEpoch;
 use fvm_shared::econ::TokenAmount;
@@ -117,7 +116,7 @@ pub trait MessageHandlerModule: Send + Sync {
     /// * `Ok(Some(response))` if this module handled the message
     /// * `Ok(None)` if this module does not handle this message type
     /// * `Err(e)` if an error occurred while handling the message
-    async fn handle_message<DB: Blockstore + Send + Sync>(
+    async fn handle_message(
         &self,
         state: &mut dyn MessageHandlerState,
         msg: &IpcMessage,
@@ -150,7 +149,7 @@ pub struct NoOpMessageHandlerModule;
 
 #[async_trait]
 impl MessageHandlerModule for NoOpMessageHandlerModule {
-    async fn handle_message<DB: Blockstore + Send + Sync>(
+    async fn handle_message(
         &self,
         _state: &mut dyn MessageHandlerState,
         _msg: &IpcMessage,

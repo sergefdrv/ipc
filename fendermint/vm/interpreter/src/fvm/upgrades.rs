@@ -9,7 +9,10 @@ use fvm_ipld_blockstore::Blockstore;
 use fvm_shared::chainid::ChainID;
 use std::collections::btree_map::Entry::{Occupied, Vacant};
 
-use super::state::{snapshot::BlockHeight, FvmExecState};
+use super::{
+    externs::FendermintExterns,
+    state::{snapshot::BlockHeight, FvmExecState},
+};
 
 #[derive(PartialEq, Eq, Clone)]
 struct UpgradeKey(ChainID, BlockHeight);
@@ -36,11 +39,12 @@ impl Ord for UpgradeKey {
 /// This is now generic over the module type M, allowing migrations to work with any module bundle.
 /// Note: The ModuleBundle bound is enforced at usage sites rather than in the type alias
 /// (Rust doesn't support where clauses on type aliases).
-pub type MigrationFunc<DB, M = fendermint_module::NoOpModuleBundle> = fn(state: &mut FvmExecState<DB, M>) -> anyhow::Result<()>;
+pub type MigrationFunc<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>> =
+    fn(state: &mut FvmExecState<DB, M>) -> anyhow::Result<()>;
 
 /// Upgrade represents a single upgrade to be executed at a given height
 #[derive(Clone)]
-pub struct Upgrade<DB, M = fendermint_module::NoOpModuleBundle>
+pub struct Upgrade<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>
 where
     DB: Blockstore + 'static + Clone,
     M: fendermint_module::ModuleBundle,
@@ -99,7 +103,7 @@ where
 /// During each block height we check if there is an upgrade scheduled at that
 /// height, and if so the migration for that upgrade is performed.
 #[derive(Clone)]
-pub struct UpgradeScheduler<DB, M = fendermint_module::NoOpModuleBundle>
+pub struct UpgradeScheduler<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>
 where
     DB: Blockstore + 'static + Clone,
     M: fendermint_module::ModuleBundle,

@@ -8,12 +8,15 @@
 //! `ModuleBundle` can provide custom executors, message handlers, genesis
 //! initialization, services, and CLI commands.
 
+use std::marker::PhantomData;
+
 use crate::cli::CliModule;
 use crate::executor::ExecutorModule;
 use crate::genesis::GenesisModule;
 use crate::message::MessageHandlerModule;
 use crate::service::ServiceModule;
 use fvm::call_manager::{CallManager, DefaultCallManager};
+use fvm::externs::Externs;
 use fvm::kernel::Kernel;
 use fvm::machine::DefaultMachine;
 
@@ -63,7 +66,8 @@ pub trait ModuleBundle:
     + Sync
     + 'static
 where
-    <<Self::Kernel as fvm::kernel::Kernel>::CallManager as fvm::call_manager::CallManager>::Machine: Send,
+    <<Self::Kernel as fvm::kernel::Kernel>::CallManager as fvm::call_manager::CallManager>::Machine:
+        Send,
 {
     /// The kernel type used by this module's executor.
     type Kernel: Kernel;
@@ -90,19 +94,38 @@ where
 ///
 /// This provides a baseline implementation that does nothing. It's useful
 /// for testing and for situations where no module extensions are needed.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoOpModuleBundle;
+#[derive(Debug)]
+pub struct NoOpModuleBundle<DB, E>(PhantomData<(DB, E)>);
+
+impl<DB, E> NoOpModuleBundle<DB, E> {
+    pub const fn new() -> Self {
+        NoOpModuleBundle(PhantomData)
+    }
+}
+
+impl<DB, E> Default for NoOpModuleBundle<DB, E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<DB, E> Clone for NoOpModuleBundle<DB, E> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<DB, E> Copy for NoOpModuleBundle<DB, E> {}
 
 // Import the no-op implementations
 use crate::cli::NoOpCliModule;
 use crate::executor::NoOpExecutorModule;
-use crate::externs::NoOpExterns;
 use crate::genesis::NoOpGenesisModule;
 use crate::message::NoOpMessageHandlerModule;
 use crate::service::NoOpServiceModule;
 
 // Implement ExecutorModule by delegating to NoOpExecutorModule
-impl<K> ExecutorModule<K> for NoOpModuleBundle
+impl<K, DB, E> ExecutorModule<K> for NoOpModuleBundle<DB, E>
 where
     K: Kernel,
     <K::CallManager as CallManager>::Machine: Send,
@@ -119,13 +142,13 @@ where
 
 // Implement MessageHandlerModule by delegating to NoOpMessageHandlerModule
 #[async_trait::async_trait]
-impl MessageHandlerModule for NoOpModuleBundle {
-    async fn handle_message<DB: fvm_ipld_blockstore::Blockstore + Send + Sync>(
+impl<DB: Send + Sync + 'static, E: Send + Sync> MessageHandlerModule for NoOpModuleBundle<DB, E> {
+    async fn handle_message(
         &self,
         state: &mut dyn crate::message::MessageHandlerState,
         msg: &fendermint_vm_message::ipc::IpcMessage,
     ) -> anyhow::Result<Option<crate::message::ApplyMessageResponse>> {
-        NoOpMessageHandlerModule.handle_message::<DB>(state, msg).await
+        NoOpMessageHandlerModule.handle_message(state, msg).await
     }
 
     fn message_types(&self) -> &[&str] {
@@ -141,7 +164,7 @@ impl MessageHandlerModule for NoOpModuleBundle {
 }
 
 // Implement GenesisModule by delegating to NoOpGenesisModule
-impl GenesisModule for NoOpModuleBundle {
+impl<DB: Send + Sync, E: Send + Sync> GenesisModule for NoOpModuleBundle<DB, E> {
     fn initialize_actors<S: crate::genesis::GenesisState>(
         &self,
         state: &mut S,
@@ -161,7 +184,7 @@ impl GenesisModule for NoOpModuleBundle {
 
 // Implement ServiceModule by delegating to NoOpServiceModule
 #[async_trait::async_trait]
-impl ServiceModule for NoOpModuleBundle {
+impl<DB: Send + Sync, E: Send + Sync> ServiceModule for NoOpModuleBundle<DB, E> {
     async fn initialize_services(
         &self,
         ctx: &crate::service::ServiceContext,
@@ -184,7 +207,7 @@ impl ServiceModule for NoOpModuleBundle {
 
 // Implement CliModule by delegating to NoOpCliModule
 #[async_trait::async_trait]
-impl CliModule for NoOpModuleBundle {
+impl<DB: Send + Sync, E: Send + Sync> CliModule for NoOpModuleBundle<DB, E> {
     fn commands(&self) -> Vec<crate::cli::CommandDef> {
         NoOpCliModule.commands()
     }
@@ -203,12 +226,14 @@ impl CliModule for NoOpModuleBundle {
 }
 
 // Finally, implement ModuleBundle itself
-impl ModuleBundle for NoOpModuleBundle {
+impl<
+        DB: fvm_ipld_blockstore::Blockstore + Send + Sync + 'static,
+        E: Externs + Send + Sync + 'static,
+    > ModuleBundle for NoOpModuleBundle<DB, E>
+{
     // Use a concrete Kernel type for the no-op implementation
     // This will be different for actual modules
-    type Kernel = fvm::DefaultKernel<
-        DefaultCallManager<DefaultMachine<fvm_ipld_blockstore::MemoryBlockstore, NoOpExterns>>,
-    >;
+    type Kernel = fvm::DefaultKernel<DefaultCallManager<DefaultMachine<DB, E>>>;
 
     fn name(&self) -> &'static str {
         "noop"
@@ -223,7 +248,7 @@ impl ModuleBundle for NoOpModuleBundle {
     }
 }
 
-impl std::fmt::Display for NoOpModuleBundle {
+impl<DB, E> std::fmt::Display for NoOpModuleBundle<DB, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "NoOpModuleBundle")
     }

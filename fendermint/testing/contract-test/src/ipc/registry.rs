@@ -41,7 +41,7 @@ impl<DB> RegistryCaller<DB> {
     }
 }
 
-impl<DB: Blockstore + Clone> RegistryCaller<DB> {
+impl<DB: Blockstore + Send + Sync + Clone> RegistryCaller<DB> {
     /// Create a new instance of the built-in subnet implemetation.
     ///
     /// Returns the address of the deployed contract.

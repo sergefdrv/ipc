@@ -3,14 +3,14 @@
 
 pub mod constants;
 mod executions;
-mod externs;
+pub mod externs;
 pub mod interpreter;
 pub mod observe;
 // storage_env moved to plugins/storage-node/src/storage_env.rs
 // storage_helpers remains as internal implementation detail (tightly coupled to FvmExecState)
+pub mod state;
 #[cfg(feature = "storage-node")]
 pub mod storage_helpers;
-pub mod state;
 pub mod store;
 pub mod topdown;
 pub mod upgrades;

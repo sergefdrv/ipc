@@ -12,6 +12,7 @@ use actors_custom_api::gas_market::Reading;
 use anyhow::Ok;
 use cid::Cid;
 use fendermint_crypto::PublicKey;
+use fendermint_module::ModuleBundle;
 use fendermint_vm_actor_interface::eam::EthAddress;
 use fendermint_vm_core::{chainid::HasChainID, Timestamp};
 use fendermint_vm_encoding::IsHumanReadable;
@@ -28,14 +29,12 @@ use fvm_shared::{
     address::Address, chainid::ChainID, clock::ChainEpoch, econ::TokenAmount, error::ExitCode,
     message::Message, receipt::Receipt, version::NetworkVersion, ActorID, MethodNum,
 };
-use fendermint_module::ModuleBundle;
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::fmt;
+use std::sync::Arc;
 use tendermint::consensus::params::Params as TendermintConsensusParams;
 
-const REVERT_TRANSACTION: bool = true;
 pub type BlockHash = [u8; 32];
 
 pub type ActorAddressMap = HashMap<ActorID, Address>;
@@ -156,7 +155,7 @@ pub struct FvmUpdatableParams {
 pub type MachineBlockstore<DB> = <DefaultMachine<DB, FendermintExterns<DB>> as Machine>::Blockstore;
 
 /// A state we create for the execution of all the messages in a block.
-pub struct FvmExecState<DB, M = fendermint_module::NoOpModuleBundle>
+pub struct FvmExecState<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>
 where
     DB: Blockstore + Clone + 'static,
     M: ModuleBundle,
@@ -211,7 +210,17 @@ where
         multi_engine: &MultiEngine,
         block_height: ChainEpoch,
         params: FvmStateParams,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Self>
+    where
+        DB: Send,
+        M: ModuleBundle<
+            Kernel: fvm::Kernel<
+                CallManager: fvm::call_manager::CallManager<
+                    Machine = DefaultMachine<DB, FendermintExterns<DB>>,
+                >,
+            >,
+        >,
+    {
         let mut nc = NetworkConfig::new(params.network_version);
         nc.chain_id = ChainID::from(params.chain_id);
 
@@ -236,10 +245,8 @@ where
         // 1. NoOpModuleBundle uses RecallExecutor which accepts any Machine type via generics
         // 2. Custom modules are responsible for ensuring their Machine type is compatible
         // 3. The machine types have the same memory layout (they're both FVM machines)
-        let mut executor = M::create_executor(engine.clone(), unsafe {
-            std::mem::transmute_copy(&machine)
-        })?;
-        std::mem::forget(machine); // Prevent double-free
+        let mut executor = M::create_executor(engine.clone(), machine)?;
+        //std::mem::forget(machine); // Prevent double-free
 
         let block_gas_tracker = BlockGasTracker::create(&mut executor)?;
         let base_fee = block_gas_tracker.base_fee().clone();
@@ -493,6 +500,10 @@ where
         F: FnOnce(&mut TokenAmount),
     {
         self.update_params(|p| f(&mut p.circ_supply))
+    }
+
+    pub fn circ_supply(&self) -> &TokenAmount {
+        &self.params.circ_supply
     }
 
     /// Update the parameters and mark them as dirty.

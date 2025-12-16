@@ -6,6 +6,7 @@
 //! This module provides conditional type aliases based on enabled feature flags.
 //! This allows the app to work with different module types without complex generics.
 
+use fendermint_vm_interpreter::fvm::externs::FendermintExterns;
 use fendermint_vm_interpreter::fvm::interpreter::FvmMessagesInterpreter;
 use fendermint_vm_interpreter::fvm::state::FvmExecState;
 
@@ -17,12 +18,12 @@ use fendermint_vm_interpreter::fvm::state::FvmExecState;
 pub type AppModule = ipc_plugin_storage_node::StorageNodeModule;
 
 #[cfg(not(feature = "plugin-storage-node"))]
-pub type AppModule = fendermint_module::NoOpModuleBundle;
+pub type AppModule<DB> = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>;
 
 /// Type alias for the interpreter using the active module.
 ///
 /// This simplifies type signatures throughout the app.
-pub type AppInterpreter<DB> = FvmMessagesInterpreter<DB, AppModule>;
+pub type AppInterpreter<DB> = FvmMessagesInterpreter<DB, AppModule<DB>>;
 
 /// Type alias for execution state using the active module.
-pub type AppExecState<DB> = FvmExecState<DB, AppModule>;
+pub type AppExecState<DB> = FvmExecState<DB, AppModule<DB>>;

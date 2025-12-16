@@ -5,8 +5,11 @@ use std::collections::HashMap;
 use std::{cell::RefCell, sync::Arc};
 
 use anyhow::{anyhow, Context};
+use fendermint_module::ModuleBundle;
+use fvm::machine::DefaultMachine;
 
 use super::{FvmExecState, FvmStateParams};
+use crate::fvm::externs::FendermintExterns;
 use crate::fvm::{state::CheckStateRef, store::ReadOnlyBlockstore, FvmMessage};
 use cid::Cid;
 use fendermint_vm_actor_interface::eam::EAM_ACTOR_ADDR;
@@ -27,7 +30,7 @@ use num_traits::Zero;
 use crate::fvm::constants::BLOCK_GAS_LIMIT;
 
 /// The state over which we run queries. These can interrogate the IPLD block store or the state tree.
-pub struct FvmQueryState<DB, M = fendermint_module::NoOpModuleBundle>
+pub struct FvmQueryState<DB, M = fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>
 where
     DB: Blockstore + Clone + 'static,
     M: fendermint_module::ModuleBundle,
@@ -51,7 +54,7 @@ where
 
 impl<DB, M> FvmQueryState<DB, M>
 where
-    DB: Blockstore + Clone + 'static,
+    DB: Blockstore + Clone + Send + 'static,
     M: fendermint_module::ModuleBundle + Default,
 {
     pub fn new(
@@ -113,6 +116,18 @@ where
     async fn with_exec_state<T, F>(self, f: F) -> anyhow::Result<(Self, T)>
     where
         F: FnOnce(&mut FvmExecState<ReadOnlyBlockstore<DB>, M>) -> anyhow::Result<T>,
+        M: ModuleBundle<
+            Kernel: fvm::Kernel<
+                CallManager: fvm::call_manager::CallManager<
+                    Machine = DefaultMachine<
+                        // DB,
+                        // FendermintExterns<DB>,
+                        ReadOnlyBlockstore<DB>,
+                        FendermintExterns<ReadOnlyBlockstore<DB>>,
+                    >,
+                >,
+            >,
+        >,
     {
         if self.pending {
             // XXX: This will block all `check_tx` from going through and also all other queries.
@@ -161,7 +176,21 @@ where
     pub async fn actor_state(
         self,
         addr: &Address,
-    ) -> anyhow::Result<(Self, Option<(ActorID, ActorState)>)> {
+    ) -> anyhow::Result<(Self, Option<(ActorID, ActorState)>)>
+    where
+        M: ModuleBundle<
+            Kernel: fvm::Kernel<
+                CallManager: fvm::call_manager::CallManager<
+                    Machine = DefaultMachine<
+                        // DB,
+                        // FendermintExterns<DB>,
+                        ReadOnlyBlockstore<DB>,
+                        FendermintExterns<ReadOnlyBlockstore<DB>>,
+                    >,
+                >,
+            >,
+        >,
+    {
         self.with_exec_state(|exec_state| {
             let state_tree = exec_state.state_tree_mut_with_deref();
             get_actor_state(state_tree, addr)
@@ -178,7 +207,21 @@ where
     pub async fn call(
         self,
         mut msg: FvmMessage,
-    ) -> anyhow::Result<(Self, (ApplyRet, HashMap<u64, Address>))> {
+    ) -> anyhow::Result<(Self, (ApplyRet, HashMap<u64, Address>))>
+    where
+        M: ModuleBundle<
+            Kernel: fvm::Kernel<
+                CallManager: fvm::call_manager::CallManager<
+                    Machine = DefaultMachine<
+                        // DB,
+                        // FendermintExterns<DB>,
+                        ReadOnlyBlockstore<DB>,
+                        FendermintExterns<ReadOnlyBlockstore<DB>>,
+                    >,
+                >,
+            >,
+        >,
+    {
         self.with_exec_state(|s| {
             // If the sequence is zero, treat it as a signal to use whatever is in the state.
             if msg.sequence.is_zero() {
@@ -213,8 +256,15 @@ where
                 )?;
 
                 // safe to unwrap as they are created above
-                let evm_actor = s.state_tree_with_deref().get_actor(created.actor_id)?.unwrap();
-                let evm_actor_state_raw = s.state_tree_with_deref().store().get(&evm_actor.state)?.unwrap();
+                let evm_actor = s
+                    .state_tree_with_deref()
+                    .get_actor(created.actor_id)?
+                    .unwrap();
+                let evm_actor_state_raw = s
+                    .state_tree_with_deref()
+                    .store()
+                    .get(&evm_actor.state)?
+                    .unwrap();
                 let evm_actor_state = from_slice::<fil_actor_evm::State>(&evm_actor_state_raw)?;
                 let actor_code = s
                     .state_tree_with_deref()
@@ -234,7 +284,21 @@ where
     }
 
     /// Returns the registry of built-in actors as enrolled in the System actor.
-    pub async fn builtin_actors(self) -> anyhow::Result<(Self, Vec<(String, Cid)>)> {
+    pub async fn builtin_actors(self) -> anyhow::Result<(Self, Vec<(String, Cid)>)>
+    where
+        M: ModuleBundle<
+            Kernel: fvm::Kernel<
+                CallManager: fvm::call_manager::CallManager<
+                    Machine = DefaultMachine<
+                        // DB,
+                        // FendermintExterns<DB>,
+                        ReadOnlyBlockstore<DB>,
+                        FendermintExterns<ReadOnlyBlockstore<DB>>,
+                    >,
+                >,
+            >,
+        >,
+    {
         let (s, sys_state) = {
             let (s, state) = self.actor_state(&SYSTEM_ACTOR_ADDR).await?;
             (s, state.ok_or(anyhow!("no system actor"))?.1)

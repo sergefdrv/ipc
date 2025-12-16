@@ -1,6 +1,7 @@
 // Copyright 2022-2024 Protocol Labs
 // SPDX-License-Identifier: Apache-2.0, MIT
 
+use crate::types::{AppInterpreter, AppModule};
 use anyhow::{anyhow, bail, Context};
 use async_stm::atomically_or_err;
 use fendermint_abci::ApplicationService;
@@ -9,7 +10,6 @@ use fendermint_module::ServiceModule;
 use fendermint_rocksdb::{blockstore::NamespaceBlockstore, namespaces, RocksDb, RocksDbConfig};
 use fendermint_vm_actor_interface::eam::EthAddress;
 use fendermint_vm_interpreter::fvm::interpreter::FvmMessagesInterpreter;
-use crate::types::{AppModule, AppInterpreter};
 use fendermint_vm_interpreter::fvm::observe::register_metrics as register_interpreter_metrics;
 use fendermint_vm_interpreter::fvm::topdown::TopDownManager;
 use fendermint_vm_interpreter::fvm::upgrades::UpgradeScheduler;
@@ -183,9 +183,8 @@ pub async fn run(
         #[cfg(feature = "plugin-storage-node")]
         if let Some(ref key) = validator_keypair {
             use ipc_plugin_storage_node::{
-                resolver::IrohResolver, resolver::ResolvePool,
-                IPCBlobFinality, IPCReadRequestClosed,
-                BlobPoolItem, ReadRequestPoolItem,
+                resolver::IrohResolver, resolver::ResolvePool, BlobPoolItem, IPCBlobFinality,
+                IPCReadRequestClosed, ReadRequestPoolItem,
             };
 
             let blob_pool: ResolvePool<BlobPoolItem> = ResolvePool::new();
@@ -307,7 +306,7 @@ pub async fn run(
 
     // Load the module based on enabled features
     // AppModule is a type alias that changes based on feature flags
-    let module = std::sync::Arc::new(AppModule::default());
+    let module = std::sync::Arc::new(AppModule::new());
 
     tracing::info!(
         module_name = fendermint_module::ModuleBundle::name(module.as_ref()),
@@ -327,7 +326,8 @@ pub async fn run(
         None
     };
 
-    let mut service_ctx = fendermint_module::service::ServiceContext::new(Box::new(settings.clone()));
+    let mut service_ctx =
+        fendermint_module::service::ServiceContext::new(Box::new(settings.clone()));
     if let Some(key_bytes) = validator_key_bytes {
         service_ctx = service_ctx.with_validator_keypair(key_bytes);
     }

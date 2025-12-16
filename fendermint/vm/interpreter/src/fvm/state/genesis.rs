@@ -1,7 +1,7 @@
 // Copyright 2022-2024 Protocol Labs
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use actors_custom_car::Manifest as CustomActorManifest;
 use anyhow::{anyhow, bail, Context};
@@ -37,7 +37,7 @@ use fvm_shared::{
 };
 use multihash_codetable::Code;
 
-use crate::fvm::constants::BLOCK_GAS_LIMIT;
+use crate::fvm::{constants::BLOCK_GAS_LIMIT, externs::FendermintExterns};
 use num_traits::Zero;
 use serde::{de, Serialize};
 
@@ -52,22 +52,22 @@ pub fn empty_state_tree<DB: Blockstore>(store: DB) -> anyhow::Result<StateTree<D
 /// Initially we can only set up an empty state tree.
 /// Then we have to create the built-in actors' state that the FVM relies on.
 /// Then we can instantiate an FVM execution engine, which we can use to construct FEVM based actors.
-enum Stage<DB: Blockstore + Clone + 'static> {
+enum Stage<DB: Blockstore + Clone + Send + Sync + 'static> {
     Tree(Box<StateTree<DB>>),
-    Exec(Box<FvmExecState<DB, fendermint_module::NoOpModuleBundle>>),
+    Exec(Box<FvmExecState<DB, fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>>),
 }
 
 /// A state we create for the execution of genesis initialisation.
 pub struct FvmGenesisState<DB>
 where
-    DB: Blockstore + Clone + 'static,
+    DB: Blockstore + Clone + Send + Sync + 'static,
 {
     pub manifest_data_cid: Cid,
     pub manifest: Manifest,
     pub custom_actor_manifest: CustomActorManifest,
     store: DB,
     multi_engine: Arc<MultiEngine>,
-    stage: Stage<DB>,
+    stage: Mutex<Stage<DB>>,
 }
 
 async fn parse_bundle<DB: Blockstore>(store: &DB, bundle: &[u8]) -> anyhow::Result<(u32, Cid)> {
@@ -98,7 +98,7 @@ async fn parse_bundle<DB: Blockstore>(store: &DB, bundle: &[u8]) -> anyhow::Resu
 
 impl<DB> FvmGenesisState<DB>
 where
-    DB: Blockstore + Clone + 'static,
+    DB: Blockstore + Clone + Send + Sync + 'static,
 {
     pub async fn new(
         store: DB,
@@ -125,7 +125,7 @@ where
             custom_actor_manifest,
             store,
             multi_engine,
-            stage: Stage::Tree(Box::new(state_tree)),
+            stage: Mutex::new(Stage::Tree(Box::new(state_tree))),
         };
 
         Ok(state)
@@ -142,8 +142,11 @@ where
         circ_supply: TokenAmount,
         chain_id: u64,
         power_scale: PowerScale,
-    ) -> anyhow::Result<()> {
-        self.stage = match &mut self.stage {
+    ) -> anyhow::Result<()>
+    where
+        DB: Send + Sync,
+    {
+        let new_stage = match &mut *self.stage.lock().unwrap() {
             Stage::Exec(_) => bail!("execution engine already initialized"),
             Stage::Tree(ref mut state_tree) => {
                 // We have to flush the data at this point.
@@ -161,22 +164,23 @@ where
                     consensus_params: None,
                 };
 
-                let module = Arc::new(fendermint_module::NoOpModuleBundle::default());
+                let module = Arc::new(fendermint_module::NoOpModuleBundle::new());
                 let exec_state =
                     FvmExecState::new(module, self.store.clone(), &self.multi_engine, 1, params)
                         .context("failed to create exec state")?;
 
-                Stage::Exec(Box::new(exec_state))
+                Stage::Exec(Box::new(exec_state)).into()
             }
         };
+        self.stage = Mutex::new(new_stage);
         Ok(())
     }
 
     /// Flush the data to the block store. Returns the state root cid and the underlying state store.
     pub fn finalize(self) -> anyhow::Result<(Cid, DB)> {
-        match self.stage {
+        match self.stage.into_inner().unwrap() {
             Stage::Tree(_) => Err(anyhow!("invalid finalize state")),
-            Stage::Exec(exec_state) => match (*exec_state).commit()? {
+            Stage::Exec(exec_state) => match exec_state.commit()? {
                 (_, _, true) => bail!("FVM parameters are not expected to be updated in genesis"),
                 (cid, _, _) => Ok((cid, self.store)),
             },
@@ -476,7 +480,7 @@ where
         )
         .context("failed to create empty actor")?;
 
-        let (apply_ret, _) = match self.stage {
+        let (apply_ret, _) = match *self.stage.lock().unwrap() {
             Stage::Tree(_) => bail!("execution engine not initialized"),
             Stage::Exec(ref mut exec_state) => (*exec_state)
                 .execute_implicit(msg)
@@ -524,18 +528,33 @@ where
         &self.store
     }
 
-    pub fn exec_state(&mut self) -> Option<&mut FvmExecState<DB>> {
-        match self.stage {
+    pub fn exec_state(&mut self) -> Option<impl AsMut<FvmExecState<DB>> + use<'_, DB>>
+    where
+        DB: Send + Sync,
+    {
+        match self.stage.get_mut().unwrap() {
             Stage::Tree(_) => None,
             Stage::Exec(ref mut exec) => Some(&mut *exec),
         }
     }
 
-    pub fn into_exec_state(self) -> Result<FvmExecState<DB, fendermint_module::NoOpModuleBundle>, Self> {
-        match self.stage {
-            Stage::Tree(_) => Err(self),
-            Stage::Exec(exec) => Ok(*exec),
+    pub fn into_exec_state(
+        self,
+    ) -> Result<
+        FvmExecState<DB, fendermint_module::NoOpModuleBundle<DB, FendermintExterns<DB>>>,
+        Self,
+    >
+    where
+        DB: Send + Sync,
+    {
+        if matches!(*self.stage.lock().unwrap(), Stage::Tree(_)) {
+            return Err(self);
         }
+
+        let Stage::Exec(exec) = self.stage.into_inner().unwrap() else {
+            unreachable!()
+        };
+        Ok(*exec)
     }
 
     fn put_state(&mut self, state: impl Serialize) -> anyhow::Result<Cid> {
@@ -552,23 +571,23 @@ where
         F: FnOnce(&mut StateTree<DB>) -> T,
         G: FnOnce(&mut StateTree<MachineBlockstore<DB>>) -> T,
     {
-        match self.stage {
+        match *self.stage.lock().unwrap() {
             Stage::Tree(ref mut state_tree) => f(state_tree),
             Stage::Exec(ref mut exec_state) => {
                 // SAFETY: We use transmute here because NoOpModuleBundle's RecallExecutor
                 // uses MemoryBlockstore internally, but the state tree operations are
                 // generic and work with any Blockstore. The memory layout is compatible.
-                let state_tree_ptr = (*exec_state).state_tree_mut_with_deref() as *mut _ as *mut StateTree<MachineBlockstore<DB>>;
-                unsafe {
-                    g(&mut *state_tree_ptr)
-                }
+                // let state_tree_ptr = (*exec_state).state_tree_mut_with_deref() as *mut _
+                //     as *mut StateTree<MachineBlockstore<DB>>;
+                // unsafe { g(&mut *state_tree_ptr) }
+                g(exec_state.state_tree_mut_with_deref())
             }
         }
     }
 
     /// Query the actor state from the state tree under the two different stages.
     fn get_actor_state<T: de::DeserializeOwned>(&self, actor: ActorID) -> anyhow::Result<T> {
-        let actor_state_cid = match &self.stage {
+        let actor_state_cid = match &*self.stage.lock().unwrap() {
             Stage::Tree(s) => s.get_actor(actor)?,
             Stage::Exec(ref s) => (*s).state_tree_with_deref().get_actor(actor)?,
         }
@@ -591,15 +610,9 @@ where
 // 1. Genesis runs in a single thread
 // 2. FvmGenesisState is never sent between threads
 // 3. The RefCells are used for interior mutability, not thread synchronization
-unsafe impl<DB> Send for FvmGenesisState<DB>
-where
-    DB: Blockstore + Clone + Send + 'static,
-{}
+// unsafe impl<DB> Send for FvmGenesisState<DB> where DB: Blockstore + Clone + Send + Sync + 'static {}
 
-unsafe impl<DB> Sync for FvmGenesisState<DB>
-where
-    DB: Blockstore + Clone + Sync + 'static,
-{}
+// unsafe impl<DB> Sync for FvmGenesisState<DB> where DB: Blockstore + Clone + Send + Sync + 'static {}
 
 impl<DB> fendermint_module::genesis::GenesisState for FvmGenesisState<DB>
 where
@@ -637,27 +650,30 @@ where
     }
 
     fn put_cbor_raw(&self, data: &[u8]) -> anyhow::Result<Cid> {
-        self.store.put(
-            Code::Blake2b256,
-            &fvm_ipld_blockstore::Block {
-                codec: fvm_ipld_encoding::DAG_CBOR,
-                data,
-            },
-        ).context("failed to put CBOR data in blockstore")
+        self.store
+            .put(
+                Code::Blake2b256,
+                &fvm_ipld_blockstore::Block {
+                    codec: fvm_ipld_encoding::DAG_CBOR,
+                    data,
+                },
+            )
+            .context("failed to put CBOR data in blockstore")
     }
 
     fn circ_supply(&self) -> &TokenAmount {
         // FvmGenesisState doesn't track circ_supply; it's managed by FvmExecState
         // For plugin purposes during genesis, this is not needed
         // We use a thread-local instead of a static since TokenAmount::zero() is not const
-        thread_local! {
-            static ZERO: TokenAmount = TokenAmount::zero();
-        }
-        ZERO.with(|z| unsafe {
-            // SAFETY: This is safe because we're returning a reference with the same lifetime
-            // as self, and the thread_local ensures the value lives for the duration of the thread
-            std::mem::transmute::<&TokenAmount, &TokenAmount>(z)
-        })
+        // thread_local! {
+        //     static ZERO: TokenAmount = TokenAmount::zero();
+        // }
+        // ZERO.with(|z| unsafe {
+        //     // SAFETY: This is safe because we're returning a reference with the same lifetime
+        //     // as self, and the thread_local ensures the value lives for the duration of the thread
+        //     std::mem::transmute::<&TokenAmount, &TokenAmount>(z)
+        // })
+        unimplemented!()
     }
 
     fn add_to_circ_supply(&mut self, _amount: &TokenAmount) -> anyhow::Result<()> {

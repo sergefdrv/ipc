@@ -7,6 +7,8 @@
 //! enabling features like multi-party gas accounting, transaction sponsors,
 //! or other execution-level modifications.
 
+use std::ops::{Deref, DerefMut};
+
 use anyhow::Result;
 use fvm::call_manager::CallManager;
 use fvm::engine::EnginePool;
@@ -85,42 +87,52 @@ where
     K: Kernel,
     <K::CallManager as CallManager>::Machine: Send,
 {
-    type Executor = storage_node_executor::RecallExecutor<K>;
+    type Executor = DelegatingExecutor<fvm::executor::DefaultExecutor<K>>;
 
     fn create_executor(
         engine_pool: EnginePool,
         machine: <K::CallManager as CallManager>::Machine,
     ) -> Result<Self::Executor> {
-        Ok(storage_node_executor::RecallExecutor::new(engine_pool, machine)?)
+        Ok(DelegatingExecutor::new(
+            fvm::executor::DefaultExecutor::new(engine_pool, machine)?,
+        ))
     }
 }
 
 /// A wrapper executor that provides `Deref` access to the machine.
 ///
-/// This wraps FVM's DefaultExecutor and provides access to the underlying machine
+/// This wraps FVM's Executor and provides access to the underlying machine
 /// through Deref/DerefMut, which is required by the ExecutorModule trait.
-pub struct DelegatingExecutor<K: Kernel> {
-    inner: fvm::executor::DefaultExecutor<K>,
+pub struct DelegatingExecutor<E> {
+    inner: E,
 }
 
-impl<K: Kernel> DelegatingExecutor<K> {
+impl<E, K> DelegatingExecutor<E>
+where
+    E: fvm::executor::Executor<Kernel = K>,
+    K: Kernel,
+{
     /// Create a new delegating executor
-    pub fn new(inner: fvm::executor::DefaultExecutor<K>) -> Self {
+    pub fn new(inner: E) -> Self {
         Self { inner }
     }
 
     /// Get the underlying executor
-    pub fn inner(&self) -> &fvm::executor::DefaultExecutor<K> {
+    pub fn inner(&self) -> &E {
         &self.inner
     }
 
     /// Get the underlying executor mutably
-    pub fn inner_mut(&mut self) -> &mut fvm::executor::DefaultExecutor<K> {
+    pub fn inner_mut(&mut self) -> &mut E {
         &mut self.inner
     }
 }
 
-impl<K: Kernel> Executor for DelegatingExecutor<K> {
+impl<E, K> Executor for DelegatingExecutor<E>
+where
+    E: fvm::executor::Executor<Kernel = K>,
+    K: Kernel,
+{
     type Kernel = K;
 
     fn execute_message(
@@ -137,18 +149,18 @@ impl<K: Kernel> Executor for DelegatingExecutor<K> {
     }
 }
 
-// Note: We cannot implement Deref for DelegatingExecutor<DefaultExecutor> because
-// DefaultExecutor doesn't expose its machine. This means NoOpExecutorModule won't
-// satisfy the ExecutorModule trait bounds. This is intentional - use RecallExecutor
-// or another executor that properly exposes the machine.
-//
-// Commented out - cannot implement without machine access:
-// impl<K: Kernel> std::ops::Deref for DelegatingExecutor<K> {
-//     type Target = <K::CallManager as CallManager>::Machine;
-//     fn deref(&self) -> &Self::Target {
-//         // Cannot access - machine is private in DefaultExecutor
-//     }
-// }
+impl<E: Deref> Deref for DelegatingExecutor<E> {
+    type Target = E::Target;
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
+    }
+}
+
+impl<E: DerefMut> DerefMut for DelegatingExecutor<E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.deref_mut()
+    }
+}
 
 #[cfg(test)]
 mod tests {

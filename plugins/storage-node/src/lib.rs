@@ -19,10 +19,13 @@ pub mod topdown_types;
 // an internal implementation detail behind feature flags. Refactoring to traits would
 // require significant work with minimal modularity benefit since it's already feature-flagged.
 
+use fvm_ipld_encoding::RawBytes;
 // Re-export commonly used types
+pub use service_resources::{
+    StorageServiceContext, StorageServiceResources, StorageServiceSettings,
+};
 pub use storage_env::{BlobPool, BlobPoolItem, ReadRequestPool, ReadRequestPoolItem};
 pub use topdown_types::{IPCBlobFinality, IPCReadRequestClosed};
-pub use service_resources::{StorageServiceResources, StorageServiceSettings, StorageServiceContext};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -39,8 +42,6 @@ use fvm::call_manager::{CallManager, DefaultCallManager};
 use fvm::engine::EnginePool;
 use fvm::kernel::Kernel;
 use fvm::machine::DefaultMachine;
-use fvm_ipld_blockstore::Blockstore;
-use fvm_ipld_encoding::RawBytes;
 use fvm_shared::address::Address;
 use fvm_shared::error::ExitCode;
 use std::collections::HashMap;
@@ -100,7 +101,7 @@ where
 // MessageHandlerModule - Handle storage-specific IPC messages
 #[async_trait]
 impl MessageHandlerModule for StorageNodeModule {
-    async fn handle_message<DB: Blockstore + Send + Sync>(
+    async fn handle_message(
         &self,
         _state: &mut dyn MessageHandlerState,
         msg: &fendermint_vm_message::ipc::IpcMessage,
@@ -162,10 +163,7 @@ impl MessageHandlerModule for StorageNodeModule {
         &["ReadRequestPending", "ReadRequestClosed"]
     }
 
-    async fn validate_message(
-        &self,
-        msg: &fendermint_vm_message::ipc::IpcMessage,
-    ) -> Result<bool> {
+    async fn validate_message(&self, msg: &fendermint_vm_message::ipc::IpcMessage) -> Result<bool> {
         use fendermint_vm_message::ipc::IpcMessage;
 
         match msg {
@@ -180,11 +178,7 @@ impl MessageHandlerModule for StorageNodeModule {
 
 // GenesisModule - Initialize storage actors
 impl GenesisModule for StorageNodeModule {
-    fn initialize_actors<S: GenesisState>(
-        &self,
-        state: &mut S,
-        genesis: &Genesis,
-    ) -> Result<()> {
+    fn initialize_actors<S: GenesisState>(&self, state: &mut S, genesis: &Genesis) -> Result<()> {
         // Initialize storage-node actors (recall_config, blobs, blob_reader)
         helpers::genesis::initialize_storage_actors(state, genesis)
     }

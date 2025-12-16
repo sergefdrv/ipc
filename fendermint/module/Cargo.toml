@@ -25,6 +25,7 @@ fendermint_vm_core = { path = "../vm/core" }
 fendermint_vm_genesis = { path = "../vm/genesis" }
 fendermint_vm_message = { path = "../vm/message" }
 
+
 # Utilities
 tracing = { workspace = true }
 
